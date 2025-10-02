@@ -1,0 +1,5 @@
+{
+    "board": "m5stack:esp32:m5stack_core2",
+    "port": "COM4",
+    "sketch": "M5_Bluetooth_Reviever.ino"
+}
