@@ -56,6 +56,7 @@ String last_system_status = "";
 /* LVGL calls it when a rendered image needs to copied to the display*/
 void my_disp_flush( lv_display_t *disp, const lv_area_t *area, uint8_t * px_map)
 {
+    std::lock_guard<std::mutex> lock(lvgl_callback_mutex);
     uint32_t w = (area->x2 - area->x1 + 1);
     uint32_t h = (area->y2 - area->y1 + 1);
     lv_draw_sw_rgb565_swap((lv_color_t *)px_map, w * h);
@@ -97,8 +98,8 @@ void my_print( lv_log_level_t level, const char * buf )
 #endif
 
 void status_icon_update(lv_timer_t * timer) {
+    std::lock_guard<std::mutex> lock(lvgl_callback_mutex);
     String status = "";
-
     if (a2dp_sink.is_connected()) {
         lv_obj_set_state(ui_pause_play, LV_STATE_DISABLED, false);
         lv_obj_set_state(ui_next_button, LV_STATE_DISABLED, false);
@@ -135,11 +136,13 @@ void status_icon_update(lv_timer_t * timer) {
 }
 
 void ui_event_volume_slider(lv_event_t *e) {
+    std::lock_guard<std::mutex> lock(lvgl_callback_mutex);
     int volume_value = lv_slider_get_value(ui_volume_slider);
     es8388.setDACVolume(volume_value);
 }
 
 void ui_event_pause_play(lv_event_t *e) {
+    std::lock_guard<std::mutex> lock(lvgl_callback_mutex);
     bool checked = lv_obj_has_state(ui_pause_play, LV_STATE_CHECKED);
     if (checked) {
         a2dp_sink.pause();
@@ -263,12 +266,14 @@ void avrc_play_pos_callback(uint32_t play_pos) {
 }
 
 void avrc_track_change_callback(uint8_t * id) {
+    std::lock_guard<std::mutex> lock(lvgl_callback_mutex);
     lv_label_set_text_fmt(ui_metadata_readout, "");
     avrc_metadata_t new_metadata;
     current_metadata = new_metadata;
 }
 
 void avrc_connection_state_callback(bool connected) {
+    std::lock_guard<std::mutex> lock(lvgl_callback_mutex);
     lv_label_set_text_fmt(ui_metadata_readout, "");
     avrc_metadata_t new_metadata;
     current_metadata = new_metadata;
@@ -433,10 +438,8 @@ unsigned long last_screen_update = 0;
 void loop() {
     unsigned long now = millis();
     if ((now - last_screen_update) > 50) {
-        std::lock_guard<std::mutex> lock(lvgl_callback_mutex);
         M5.update();
         lv_task_handler(); /* let the GUI do its work */
-        lv_timer_handler(); /* let the timers do their work */
         last_screen_update = now;
         if ((now - last_touch_ms) > 10000) {
             uint8_t current_brightness = M5.Lcd.getBrightness();
