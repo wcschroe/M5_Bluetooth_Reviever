@@ -8,6 +8,8 @@
 #include <lvgl.h>
 #include <M5Unified.h>
 #include <map>
+#include <mutex>
+std::mutex lvgl_callback_mutex;
 
 #define SYS_I2C_SDA_PIN  21
 #define SYS_I2C_SCL_PIN  22
@@ -193,11 +195,37 @@ typedef struct {
     uint32_t num_tracks = 0; // ESP_AVRC_MD_ATTR_PLAYING_TIME
     uint32_t genre = 0; // ESP_AVRC_MD_ATTR_GENRE
     uint32_t playtime_ms = 0; // ESP_AVRC_MD_ATTR_PLAYING_TIME
+    uint32_t current_play_position_ms = 0; // from callback 
 } avrc_metadata_t;
 
 avrc_metadata_t current_metadata;
 
+uint32_t avrc_metadata_to_uint32_t(const uint8_t *metadata_data) {
+    union {
+        uint8_t i[4];
+        uint32_t li;
+    } converter;
+    converter.i[0] = metadata_data[3];
+    converter.i[1] = metadata_data[2];
+    converter.i[2] = metadata_data[1];
+    converter.i[3] = metadata_data[0];
+    return converter.li;
+}
+
+float avrc_metadata_to_float(const uint8_t *metadata_data) {
+    union {
+        uint8_t i[4];
+        float f;
+    } converter;
+    converter.i[0] = metadata_data[0];
+    converter.i[1] = metadata_data[1];
+    converter.i[2] = metadata_data[2];
+    converter.i[3] = metadata_data[3];
+    return converter.f;
+}
+
 void avrc_metadata_callback(uint8_t metadata_attr, const uint8_t * metadata_data) {
+    std::lock_guard<std::mutex> lock(lvgl_callback_mutex);
     if (metadata_attr == ESP_AVRC_MD_ATTR_TITLE) {
         current_metadata.title = String((char*)metadata_data);
     }
@@ -207,28 +235,28 @@ void avrc_metadata_callback(uint8_t metadata_attr, const uint8_t * metadata_data
     else if (metadata_attr == ESP_AVRC_MD_ATTR_ALBUM) {
         current_metadata.album = String((char*)metadata_data);
     }
-    else if (metadata_attr == ESP_AVRC_MD_ATTR_TRACK_NUM) {
-        current_metadata.track_num = sizeof(metadata_data);
-        Serial.printf("track num is size: %d\n", current_metadata.track_num);
+    else if (metadata_attr >= ESP_AVRC_MD_ATTR_TRACK_NUM) {
+        String metadata_attr_str = (metadata_attr == ESP_AVRC_MD_ATTR_TRACK_NUM  ? "track num"  : (metadata_attr == ESP_AVRC_MD_ATTR_NUM_TRACKS ? "num tracks" : (metadata_attr == ESP_AVRC_MD_ATTR_GENRE ? "genre" : (metadata_attr == ESP_AVRC_MD_ATTR_PLAYING_TIME ? "play time" : ""))));
+        Serial.printf("recieved metadata %s: ", metadata_attr_str);
+        for (int i = 0; i < sizeof(metadata_data); i++) {
+            Serial.printf("%d,", metadata_data[i]);
+        }
+        Serial.println();
     }
-    else if (metadata_attr == ESP_AVRC_MD_ATTR_NUM_TRACKS) {
-        current_metadata.num_tracks = sizeof(metadata_data);
-        Serial.printf("num tracks is size: %d\n", current_metadata.num_tracks);
+    bool not_provided = current_metadata.title.indexOf("Not Provided") >= 0;
+    if (not_provided) {
+        lv_label_set_text(ui_metadata_readout, "");
     }
-    else if (metadata_attr == ESP_AVRC_MD_ATTR_GENRE) {
-        current_metadata.genre = sizeof(metadata_data);
-        Serial.printf("genre is size: %d\n", current_metadata.genre);
+    else {
+        uint32_t play_pos_seconds = (current_metadata.current_play_position_ms / 1000);
+        uint32_t play_pos_minutes = (play_pos_seconds / 60);
+        lv_label_set_text_fmt(ui_metadata_readout, "%s by %s\n%s\n%02d:%02d", current_metadata.title.c_str(), current_metadata.artist.c_str(), current_metadata.album.c_str(), play_pos_minutes % 60, play_pos_seconds % 60);
     }
-    else if (metadata_attr == ESP_AVRC_MD_ATTR_PLAYING_TIME) {
-        current_metadata.playtime_ms = sizeof(metadata_data);
-        Serial.printf("playtime is size: %d\n", current_metadata.playtime_ms);
-    }
-    lv_textarea_set_text(ui_metadata_readout, String(String(current_metadata.title) + " by " + String(current_metadata.artist) + "\non: " + String(current_metadata.album)).c_str());
-
 }
 
 void avrc_playback_state_callback(esp_avrc_playback_stat_t playback) {
-    if (playback == ESP_AVRC_PLAYBACK_STOPPED) {
+    std::lock_guard<std::mutex> lock(lvgl_callback_mutex);
+    if (playback == ESP_AVRC_PLAYBACK_PAUSED) {
         lv_obj_set_state(ui_pause_play, LV_STATE_CHECKED, true);
         lv_label_set_text(ui_pause_play_icon, LV_SYMBOL_PLAY);
     }
@@ -236,13 +264,23 @@ void avrc_playback_state_callback(esp_avrc_playback_stat_t playback) {
         lv_obj_set_state(ui_pause_play, LV_STATE_CHECKED, false);
         lv_label_set_text(ui_pause_play_icon, LV_SYMBOL_PAUSE);
     }
+    else if (playback == ESP_AVRC_PLAYBACK_STOPPED) {
+        lv_label_set_text_fmt(ui_metadata_readout, "");
+        avrc_metadata_t new_metadata;
+        current_metadata = new_metadata;
+    }
 }
 
 void avrc_play_pos_callback(uint32_t play_pos) {
-
+    std::lock_guard<std::mutex> lock(lvgl_callback_mutex);
+    current_metadata.current_play_position_ms = play_pos;
+    uint32_t play_pos_seconds = (current_metadata.current_play_position_ms / 1000);
+    uint32_t play_pos_minutes = (play_pos_seconds / 60);
+    lv_label_set_text_fmt(ui_metadata_readout, "%s by %s\n%s\n%02d:%02d", current_metadata.title.c_str(), current_metadata.artist.c_str(), current_metadata.album.c_str(), play_pos_minutes % 60, play_pos_seconds % 60);
 }
 
 void avrc_track_change_callback(uint8_t * id) {
+    lv_label_set_text_fmt(ui_metadata_readout, "");
     avrc_metadata_t new_metadata;
     current_metadata = new_metadata;
 }
@@ -349,14 +387,16 @@ void setup() {
     lv_obj_set_align(ui_prev_button_icon, LV_ALIGN_CENTER);
     lv_label_set_text(ui_prev_button_icon, LV_SYMBOL_PREV);
 
-    ui_metadata_readout = lv_textarea_create(ui_Screen1);
+    ui_metadata_readout = lv_label_create(ui_Screen1);
     lv_obj_set_align(ui_metadata_readout, LV_ALIGN_CENTER);
-    lv_obj_set_width(ui_metadata_readout, TFT_HOR_RES - 70);
+    lv_obj_set_width(ui_metadata_readout, TFT_HOR_RES - 10);
     lv_obj_set_height(ui_metadata_readout, 75);
     lv_obj_set_pos(ui_metadata_readout, 0, -45);
-    lv_obj_set_style_bg_main_opa(ui_metadata_readout, 10, LV_PART_MAIN & LV_PART_SELECTED);
+    lv_label_set_text(ui_metadata_readout, "");
+    lv_obj_set_style_text_align(ui_metadata_readout, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(ui_metadata_readout, lv_color_hex(0xFFFFFF), LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    // Configure I2S pins
+    // Configure I2S pins for i2s stream object
     auto i2s_cfg = i2s.defaultConfig();
     i2s_cfg.pin_mck = SYS_I2S_MCLK_PIN;
     i2s_cfg.pin_bck = SYS_I2S_SCLK_PIN;  // BCLK pin
@@ -375,7 +415,7 @@ void setup() {
     es8388.setDACOutput(DAC_OUTPUT_ALL);
     es8388.setBitsSample(ES_MODULE_ADC, BIT_LENGTH_16BITS);
     es8388.setSampleRate(SAMPLE_RATE_48K);
-    // i2s
+    // also configure i2s for es8388
     PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO0_U, FUNC_GPIO0_CLK_OUT1);
     WRITE_PERI_REG(PIN_CTRL, 0xFFF0);
     i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
@@ -386,7 +426,7 @@ void setup() {
     a2dp_sink.set_volume(100);
     a2dp_sink.set_avrc_metadata_callback(avrc_metadata_callback);
     a2dp_sink.set_avrc_rn_playstatus_callback(avrc_playback_state_callback);
-    a2dp_sink.set_avrc_rn_play_pos_callback(avrc_play_pos_callback);
+    a2dp_sink.set_avrc_rn_play_pos_callback(avrc_play_pos_callback, 1);
     a2dp_sink.set_avrc_rn_track_change_callback(avrc_track_change_callback);
     a2dp_sink.set_avrc_rn_events({ESP_AVRC_RN_PLAY_STATUS_CHANGE , ESP_AVRC_RN_TRACK_CHANGE ,
                                     ESP_AVRC_RN_TRACK_REACHED_END , ESP_AVRC_RN_TRACK_REACHED_START ,
@@ -403,6 +443,7 @@ unsigned long last_screen_update = 0;
 void loop() {
     unsigned long now = millis();
     if ((now - last_screen_update) > 50) {
+        std::lock_guard<std::mutex> lock(lvgl_callback_mutex);
         M5.update();
         lv_task_handler(); /* let the GUI do its work */
         last_screen_update = now;
