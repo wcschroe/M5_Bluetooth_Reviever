@@ -23,26 +23,6 @@ std::mutex lvgl_callback_mutex;
 #define SYS_SPI_CLK_PIN  18
 #define SYS_SPI_CS_PIN   4
 
-i2s_config_t i2s_config = {.mode                 = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_RX),
-                           .sample_rate          = 48000,
-                           .bits_per_sample      = I2S_BITS_PER_SAMPLE_16BIT,
-                           .channel_format       = I2S_CHANNEL_FMT_RIGHT_LEFT,
-                           .communication_format = I2S_COMM_FORMAT_STAND_I2S,
-                           .intr_alloc_flags     = 0,
-                           .dma_buf_count        = 8,
-                           .dma_buf_len          = 1024,
-                           .use_apll             = false,
-                           .tx_desc_auto_clear   = true,
-                           .fixed_mclk           = 0};
-
-i2s_pin_config_t pin_config = {
-    .mck_io_num   = SYS_I2S_MCLK_PIN,
-    .bck_io_num   = SYS_I2S_SCLK_PIN,
-    .ws_io_num    = SYS_I2S_LRCK_PIN,
-    .data_out_num = SYS_I2S_DOUT_PIN,
-    .data_in_num  = SYS_I2S_DIN_PIN,
-};
-
 // I2S and Bluetooth sink
 ES8388 es8388(&Wire, SYS_I2C_SDA_PIN, SYS_I2C_SCL_PIN);
 I2SStream i2s;
@@ -401,11 +381,15 @@ void setup() {
     i2s_cfg.pin_mck = SYS_I2S_MCLK_PIN;
     i2s_cfg.pin_bck = SYS_I2S_SCLK_PIN;  // BCLK pin
     i2s_cfg.pin_ws = SYS_I2S_LRCK_PIN;   // LRC pin
-    i2s_cfg.pin_data = SYS_I2S_DIN_PIN; // DIN pin
-    i2s_cfg.pin_data_rx = SYS_I2S_DOUT_PIN;
+    i2s_cfg.pin_data = SYS_I2S_DOUT_PIN; 
+    i2s_cfg.pin_data_rx = SYS_I2S_DIN_PIN; // DIN pin
+
+    i2s_cfg.rx_tx_mode = audio_tools::RXTX_MODE;
+    i2s_cfg.sample_rate = 48000;
+    i2s_cfg.bits_per_sample = 16;
+
     i2s.begin(i2s_cfg);
 
-    Serial.println("Read Reg ES8388 : ");
     if (!es8388.init()) Serial.println("Init Fail");
     es8388.setADCInput(ADC_INPUT_LINPUT1_RINPUT1);
     es8388.setMicGain(MIC_GAIN_24DB);
@@ -415,11 +399,6 @@ void setup() {
     es8388.setDACOutput(DAC_OUTPUT_ALL);
     es8388.setBitsSample(ES_MODULE_ADC, BIT_LENGTH_16BITS);
     es8388.setSampleRate(SAMPLE_RATE_48K);
-    // also configure i2s for es8388
-    PIN_FUNC_SELECT(PERIPHS_IO_MUX_GPIO0_U, FUNC_GPIO0_CLK_OUT1);
-    WRITE_PERI_REG(PIN_CTRL, 0xFFF0);
-    i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
-    i2s_set_pin(I2S_NUM_0, &pin_config);
 
     // Start Bluetooth sink
     a2dp_sink.start("M5 Speaker");
