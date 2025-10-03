@@ -66,6 +66,8 @@ void my_disp_flush( lv_display_t *disp, const lv_area_t *area, uint8_t * px_map)
     lv_disp_flush_ready(disp);
 }
 
+unsigned int last_touch_ms = 0;
+
 /*Read the touchpad*/
 void my_touchpad_read( lv_indev_t * indev, lv_indev_data_t * data )
 {
@@ -81,6 +83,7 @@ void my_touchpad_read( lv_indev_t * indev, lv_indev_data_t * data )
         data->point.x = pos.x;
         data->point.y = pos.y;
         Serial.printf("Touch: %d %d\n", data->point.x, data->point.y);
+        last_touch_ms = millis();
     }
 }
 
@@ -230,7 +233,7 @@ void avrc_metadata_callback(uint8_t metadata_attr, const uint8_t * metadata_data
     else {
         uint32_t play_pos_seconds = (current_metadata.current_play_position_ms / 1000);
         uint32_t play_pos_minutes = (play_pos_seconds / 60);
-        lv_label_set_text_fmt(ui_metadata_readout, "%s by %s\n%s\n%02d:%02d", current_metadata.title.c_str(), current_metadata.artist.c_str(), current_metadata.album.c_str(), play_pos_minutes % 60, play_pos_seconds % 60);
+        lv_label_set_text_fmt(ui_metadata_readout, "%s - %s\n%s\n%02d:%02d", current_metadata.title.c_str(), current_metadata.artist.c_str(), current_metadata.album.c_str(), play_pos_minutes % 60, play_pos_seconds % 60);
     }
 }
 
@@ -256,10 +259,16 @@ void avrc_play_pos_callback(uint32_t play_pos) {
     current_metadata.current_play_position_ms = play_pos;
     uint32_t play_pos_seconds = (current_metadata.current_play_position_ms / 1000);
     uint32_t play_pos_minutes = (play_pos_seconds / 60);
-    lv_label_set_text_fmt(ui_metadata_readout, "%s by %s\n%s\n%02d:%02d", current_metadata.title.c_str(), current_metadata.artist.c_str(), current_metadata.album.c_str(), play_pos_minutes % 60, play_pos_seconds % 60);
+    lv_label_set_text_fmt(ui_metadata_readout, "%s - %s\n%s\n%02d:%02d", current_metadata.title.c_str(), current_metadata.artist.c_str(), current_metadata.album.c_str(), play_pos_minutes % 60, play_pos_seconds % 60);
 }
 
 void avrc_track_change_callback(uint8_t * id) {
+    lv_label_set_text_fmt(ui_metadata_readout, "");
+    avrc_metadata_t new_metadata;
+    current_metadata = new_metadata;
+}
+
+void avrc_connection_state_callback(bool connected) {
     lv_label_set_text_fmt(ui_metadata_readout, "");
     avrc_metadata_t new_metadata;
     current_metadata = new_metadata;
@@ -407,6 +416,7 @@ void setup() {
     a2dp_sink.set_avrc_rn_playstatus_callback(avrc_playback_state_callback);
     a2dp_sink.set_avrc_rn_play_pos_callback(avrc_play_pos_callback, 1);
     a2dp_sink.set_avrc_rn_track_change_callback(avrc_track_change_callback);
+    a2dp_sink.set_avrc_connection_state_callback(avrc_connection_state_callback);
     a2dp_sink.set_avrc_rn_events({ESP_AVRC_RN_PLAY_STATUS_CHANGE , ESP_AVRC_RN_TRACK_CHANGE ,
                                     ESP_AVRC_RN_TRACK_REACHED_END , ESP_AVRC_RN_TRACK_REACHED_START ,
                                     ESP_AVRC_RN_PLAY_POS_CHANGED , ESP_AVRC_RN_BATTERY_STATUS_CHANGE ,
@@ -414,6 +424,7 @@ void setup() {
                                     ESP_AVRC_RN_NOW_PLAYING_CHANGE , ESP_AVRC_RN_AVAILABLE_PLAYERS_CHANGE ,
                                     ESP_AVRC_RN_ADDRESSED_PLAYER_CHANGE ,
                                     ESP_AVRC_RN_UIDS_CHANGE,ESP_AVRC_RN_VOLUME_CHANGE});
+
     lv_slider_set_value(ui_volume_slider, lv_slider_get_max_value(ui_volume_slider), LV_ANIM_OFF);
 }
 
@@ -425,6 +436,14 @@ void loop() {
         std::lock_guard<std::mutex> lock(lvgl_callback_mutex);
         M5.update();
         lv_task_handler(); /* let the GUI do its work */
+        lv_timer_handler(); /* let the timers do their work */
         last_screen_update = now;
+        if ((now - last_touch_ms) > 10000) {
+            uint8_t current_brightness = M5.Lcd.getBrightness();
+            M5.Lcd.setBrightness(current_brightness - (current_brightness > 5 ? 1 : 0)); // min brightness at 5 so we still see a little bit
+        }
+        else {
+            M5.Lcd.setBrightness(100);
+        }
     }
 }
