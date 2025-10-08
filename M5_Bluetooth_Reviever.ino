@@ -1,9 +1,7 @@
 #include <Arduino.h>
 #include <AudioTools.h> // clone into Documents/Arduino/libraries/ https://github.com/pschatzmann/arduino-audio-tools
 #include <BluetoothA2DPSink.h> // clone into Documents/Arduino/libraries/ https://github.com/pschatzmann/ESP32-A2DP
-#include "audio_i2c.hpp"
 #include "es8388.hpp"
-#include "driver/i2s.h"
 #include <Wire.h>
 #include <lvgl.h>
 #include <M5Unified.h>
